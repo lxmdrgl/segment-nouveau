@@ -149,8 +149,6 @@ Tensor sum: 12.0
 - `frrn_a_lite` (reduced FRRN-A, ~1.4M parameters, width set by `model.base`)
 - `fcdensenet103` (FC-DenseNet103 matching the ~25.7M parameter version used in the 2026 CIWA tomato paper, also very memory hungry)
 
-See [Checking a model's size and memory](#checking-a-models-size-and-memory) before picking a `batch_size`.
-
 **Example single run**:
 
 ```bash
@@ -166,6 +164,16 @@ python train.py --multirun data_root=/full/path/to/dataset crop=tomato epochs=10
 ```
 
 Sweeps (see above multi-run example) output to `checkpoints/sweeps/<timestamp>/<model>/<crop>/<settings>/`, where `<settings>` refers to the unique settings used to generate that specific checkpoint, e.g., `epochs-100+lr-1e-4+patience-7+seed-0` and `<model>` refers to the specific model that was trained. Non-experimental keys like `device` or `num_workers` are left out of these settings, so changing them won't split a sweep's groupings. Similarly to single runs, training also writes `<model>-last.pt` alongside `<model>-best.pt`.
+
+**Where to put sweeps**: 
+
+`checkpoints/sweeps/` should be reserved for model comparison. Every sweep in it should train one model with the same settings as the rest (e.g. both sizings, 3 seeds, `epochs=100`, `patience=12`, `'eval_splits=[test,valid]'`), so running `summarize.py` and `figures.py` on `checkpoints/sweeps/` compares every model fairly and grows as models are added. Any other experiment (a different `crop.train_crop`, `lr`, `patience`, etc.) should go in its own folder under `checkpoints/experiments/` so it doesn't end up in the model comparison:
+
+```bash
+python train.py --multirun <arguments> 'hydra.sweep.dir=checkpoints/experiments/<experiment name>/${now:%Y-%m-%d_%H-%M-%S}'
+```
+
+Then point `summarize.py` and `figures.py` at `checkpoints/experiments/<experiment name>/` to compare that experiment's settings on their own.
 
 *Note: When passing a path, use `$HOME` instead of `~`, and if passing a list, arguments must be quoted (see `eval_splits` and `crop.train_crop` below and note the single quotes around the flags)*
 
@@ -184,20 +192,22 @@ Sweeps (see above multi-run example) output to `checkpoints/sweeps/<timestamp>/<
 | `epochs`           | Maximum number of epochs to train for (passes over the training set)                                                                                            | `epochs=100`                       |
 | `monitor`          | Which metric to monitor during training for early stopping and determining the best model to save                                                               | `monitor=valid_loss`               |
 | `patience`         | How many epochs to continue training for without seeing improvement in the monitored value                                                                      | `patience=7`                       |
-| `batch_size`       | Number of images in each training batch                                                                                                                         | `batch_size=8`                     |
-| `lr`               | The learning rate of the model                                                                                                                                  | `lr=1e-4`**                        |
+| `batch_size`       | Number of images in each training batch                                                                                                                         | `batch_size=8` [3]                 |
+| `lr`               | The learning rate of the model                                                                                                                                  | `lr=1e-4` [2]                      |
 | `crop.train_crop`  | The size of the random crop that is applied to training images (h x w)                                                                                          | `'crop.train_crop=[256,480]'`      |
 | `output_dir`       | The folder this script should output to                                                                                                                         | `output_dir=checkpoints`           |
 | `seed`             | Number to use as a random seed for anything that can be seeded                                                                                                  | `seed=42`                          |
-| `eval_splits`      | Which splits the model should be automatically evaluated against after training is completed                                                                    | `'eval_splits=[test, valid]'`*     |
+| `eval_splits`      | Which splits the model should be automatically evaluated against after training is completed                                                                    | `'eval_splits=[test, valid]'` [1]  |
 | `sizing`           | How images are sized for the model: native = random training crops, full size imgs for validation/scoring; stretch512 resizes everything to 512x512             | `sizing=stretch512`                |
 | `device`           | Device where everything should happen: `cuda`, `cuda:<n>` for a specific GPU, or `cpu`.                                                                         | `device=cuda:1`                    |
 | `num_workers`      | Number of processes loading data in parallel - note that this does in fact result in different random crops, so keep it the same when trying to reproduce a run | `num_workers=8`                    |
 | `resume`           | Carry on from the last finished epoch in an existing run folder - see [Resuming an interrupted run](#resuming-an-interrupted-run)                               | `resume=true`                      |
 
-*`'eval_splits=[]'` disables automatic post-training evaluation
+[1] - `'eval_splits=[]'` disables automatic post-training evaluation
 
-**`lr=1e-4` and `lr=0.0001` will create different folders despite being equivalent values.
+[2] - `lr=1e-4` and `lr=0.0001` will create different folders despite being equivalent values.
+
+[3] - See [Checking a model's size and memory](#checking-a-models-size-and-memory) before picking a `batch_size`.
 
 ### Resuming an interrupted run
 
@@ -310,16 +320,16 @@ Takes a set of scored runs (as a result of automatic evaluation from `train.py` 
 
 ## Generating figures
 
-**Example generation for a sweep**:
-
-```bash
-python figures.py folder=checkpoints/sweeps/<timestamp>/ metric=precision
-```
-
 **Example generation for a single run**:
 
 ```bash
 python figures.py folder=checkpoints/<model>/<crop>/<timestamp>/ metric=precision
+```
+
+**Example generation for a sweep**:
+
+```bash
+python figures.py folder=checkpoints/sweeps/<timestamp>/ metric=precision
 ```
 
 To generate figures, the script reads `history.json` from the model's training to generate `curves.png` plotting metrics against epochs. It also reads `eval/*/metrics.json` from the model evaluation to generate confusion matrices, one per scored split, output as `confusion-<crop>-<split>.png`. Finally it reads `summary/summary.json` from the summarization script to output one `comparison-<crop>-<split>.png` per section. The script also writes `overview-<split>.png` per scored split made from the same summary which shows all crops side by side, one bar per setting, with mean ± std across seeds. The overview only considers models **scored on the crop they were trained on** and is skipped with a log message when the summary covers fewer than two crops (since that would just repeat that single crop's comparison chart). If `summary.json` is missing, it will log a message telling you to run `summarize.py` first. Runs without a `history.json` won't be found (so won't have confusion matrices generated), but missing files in general will not result in an error.
@@ -336,16 +346,16 @@ Everything output by `figures.py` goes in `<folder>/figures/`, where per-run fig
 
 ## Predicting on new images
 
-**Example prediction (folder)**:
-
-```bash
-python predict.py checkpoint=checkpoints/<model>/<crop>/<timestamp>/ input=<path/to/input/images> save_logits=True save_overlays=False
-```
-
 **Example prediction (single image)**:
 
 ```bash
 python predict.py checkpoint=checkpoints/<model>/<crop>/<timestamp>/ input=<path/to/input/image.png> save_logits=False save_overlays=True
+```
+
+**Example prediction (folder)**:
+
+```bash
+python predict.py checkpoint=checkpoints/<model>/<crop>/<timestamp>/ input=<path/to/input/images> save_logits=True save_overlays=False
 ```
 
 Outputs are saved to `<run>/predict/<timestamp>` with a `predict.log` file and organized into folders corresponding to what they are: `masks/`, `logits/`, `overlays/`. Masks use the label colors and are named `<stem>_pred.png` to line up with `<stem>_L.png`. The other two outputs follow a similar scheme, with `_pred.png` being replaced by `_logits.npy` and `_overlay.png`. The overlays themselves tint only pixels predicted as `sunlit`. Saving the optional outputs (logits and overlays) can result in many large files being saved to your disk (~12 MB for logits per almond/citrus/grape image in the CIWA+ dataset), so saving them defaults to False.
