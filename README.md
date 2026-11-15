@@ -328,10 +328,11 @@ Everything output by `figures.py` goes in `<folder>/figures/`, where per-run fig
 
 *Note: The dashed line on the curve marks the saved (best according to `monitor` value used in training) epoch. It won't necessarily be at the peak of the `metric` being plotted, unless it matches the `monitor` value. Also, confusion matrices show percentages as a share of all pixels in the split with a fixed color scale so shades are comparable across figures. The titles for confusion matrices will always show `sunlit IoU` regardless of `metric`*
 
-| Argument | Description                                                                                                                                                                                                | Example                                         |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| `folder` | A sweep, a model or crop folder inside a sweep, or any folder containing runs - Required                                                                                                                   | `folder=checkpoints/sweeps/2026-10-22_18-02-44` |
-| `metric` | Which metric to use for the curves, comparison, and overview charts - Default is `sunlit_iou`, must be one of [`accuracy`, `precision`, `recall`, `fpr`, `f1`, `sunlit_iou`, `non_sunlit_iou`, `mean_iou`] | `metric=f1`                                     |
+| Argument   | Description                                                                                                                                                                                                       | Example                                         |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| `folder`   | A sweep, a model or crop folder inside a sweep, or any folder containing runs - Required                                                                                                                          | `folder=checkpoints/sweeps/2026-10-22_18-02-44` |
+| `metric`   | Which metric to use for the curves, comparison, and overview charts - Default is `sunlit_iou`, must be one of [`accuracy`, `precision`, `recall`, `fpr`, `f1`, `sunlit_iou`, `non_sunlit_iou`, `mean_iou`]        | `metric=f1`                                     |
+| `color_by` | Setting key that gets its own colour in the comparison and overview charts; the other settings sharing that value get darker shades of it. Charts with only one value of the key keep the default colours | `color_by=sizing`                               |
 
 ## Predicting on new images
 

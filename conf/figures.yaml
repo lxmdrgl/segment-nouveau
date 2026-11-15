@@ -4,6 +4,7 @@ defaults:
 
 folder: ???         # Folder must be specified
 metric: sunlit_iou  # Default metric
+color_by: model     # Setting key that gets one color per value in comparison and overview charts - other settings get a darker or lighter shade of that color
 
 hydra:
   run:

@@ -2,6 +2,7 @@
 Generates figures for the evaluation of models as created/evaluated by train.py/evaluate.py
 """
 
+import colorsys
 import json
 import logging
 import textwrap
@@ -123,11 +124,44 @@ def with_shared(title: str, shared: str) -> str:
         return title
     return title + "\n" + textwrap.fill(f"shared: {shared}", width=80, break_on_hyphens=False)
 
-def plot_comparison(rows: dict, metric: str, title: str, out_path: Path) -> None:
+def find_part(setting: str, key: str) -> str:
+    """
+    Finds the part of a setting name that belongs to one key, e.g. "model-frrn_a" for key "model"
+    :param setting: A setting name as found in summary.json (kv pairs joined with +)
+    :param key:     The key to look for
+    :return:        The matching part, or "" if the setting doesn't contain that key
+    """
+
+    return next((part for part in setting.split("+") if part.startswith(f"{key}-")), "")
+
+def bar_colors(settings: list[str], key: str) -> list | None:
+    """
+    Gives each value of `key` its own colour, and each setting sharing that value its own shade of it
+    :param settings:    Setting names in the order their bars are drawn
+    :param key:         The setting key that decides the colour, e.g. "model"
+    :return:            One colour per setting, or None (keep the default colours) when fewer than 2 values of `key` are found
+    """
+
+    groups = [find_part(setting, key) for setting in settings]
+    names = sorted(set(groups))
+    if len(names) < 2:
+        return None
+
+    base = sns.color_palette(n_colors=len(names))  # One colour per group from the current seaborn palette
+    colors = []
+    for setting, group in zip(settings, groups):
+        members = [other for other, other_group in zip(settings, groups) if other_group == group]
+        position = members.index(setting) / max(len(members) - 1, 1)  # 0 for the first setting in its group, 1 for the last
+        hue, lightness, saturation = colorsys.rgb_to_hls(*base[names.index(group)])  # Split the colour into hue, lightness and saturation
+        colors.append(colorsys.hls_to_rgb(hue, lightness - 0.10 * (1 - position), saturation))  # Only lightness changes - the first setting is 0.10 darker, the last is the plain colour
+    return colors
+
+def plot_comparison(rows: dict, metric: str, color_by: str, title: str, out_path: Path) -> None:
     """
     Plots comparison figures for multirun summaries for direct comparison between models with different settings 
     :param rows:        The rows in the summary table to use for generating comparison figures
     :param metric:      The metric being considered for comparison
+    :param color_by:    The setting key that decides bar colors (see bar_colors())
     :param title:       The title to be used for the figure
     :param out_path:    The path the figure should be saved to
     :return:            None
@@ -150,7 +184,8 @@ def plot_comparison(rows: dict, metric: str, title: str, out_path: Path) -> None
     ax = fig.add_axes((0, 0, 1, 1))  # Axes fill the figure, savefig's bbox_inches="tight" grows the image to fit the labels
 
     # Use horizontal bar chart since we have long names that won't fit on a vertical bar chart very well
-    bars = ax.barh(names, means, xerr=stds, capsize=4)
+    colors = bar_colors(list(settings), color_by)
+    bars = ax.barh(names, means, xerr=stds, capsize=4, color=colors)
     ax.bar_label(bars, labels=[f"{m:.3f} ± {s:.3f}" for m, s in zip(means, stds)], label_type="center", color="white")
     ax.invert_yaxis()
     ax.set(xlabel=f"{metric} (mean ± std across seeds)", title=with_shared(title, shared))
@@ -210,12 +245,13 @@ def plot_confusion(counts: dict, title: str, out_path: Path) -> None:
     fig.savefig(out_path, dpi=300)
     plt.close(fig)
 
-def plot_overview(results: dict, split: str, metric: str, out_path: Path) -> None:
+def plot_overview(results: dict, split: str, metric: str, color_by: str, out_path: Path) -> None:
     """
     Generates overview charts for the comparison of performance across crops
     :param results:     The dictionary holding summary results to use for chart creation
     :param split:       The split being compared
     :param metric:      The metric by which runs should be compared in the chart
+    :param color_by:    The setting key that decides bar colors (see bar_colors())
     :param out_path:    Path the figure should be saved to
     :return:            None
     """
@@ -244,7 +280,8 @@ def plot_overview(results: dict, split: str, metric: str, out_path: Path) -> Non
 
     # Aggregate crops being evaluated and settings
     crops = sorted({crop for per_setting in table.values() for crop in per_setting})  # Abomination one liner, thanks Python
-    settings = sorted(table)
+    settings = sorted(table, key=lambda setting: (find_part(setting, color_by), setting))  # Bars that share a colour sit next to each other
+    colors = bar_colors(settings, color_by)
     short, shared = split_shared(settings)
     labels = stack_labels(short)
 
@@ -269,7 +306,7 @@ def plot_overview(results: dict, split: str, metric: str, out_path: Path) -> Non
         stds = [stat["std"] if stat else 0 for stat in stats]
 
         # Build the bars
-        bars = ax.bar(x + offset, means, width, yerr=stds, capsize=4, label=labels[i])
+        bars = ax.bar(x + offset, means, width, yerr=stds, capsize=4, label=labels[i], color=colors[i] if colors else None)
         ax.bar_label(bars, labels=[f"{mean:.3f}" if stat else "" for mean, stat in zip(means, stats)], label_type="center", color="white", fontsize=10, rotation=rotation)
 
     # Set info for graph
@@ -361,12 +398,12 @@ def main(cfg: DictConfig) -> None:
         else:
             for section, rows in summary["results"].items():
                 title = f"{section}: {cfg.metric} comparison"
-                plot_comparison(rows, cfg.metric, title, out_dir / f"comparison-{section}.png")
+                plot_comparison(rows, cfg.metric, cfg.color_by, title, out_dir / f"comparison-{section}.png")
 
             # Get list of splits
             splits = sorted({res.rsplit("-", 1)[1] for res in summary["results"]})
             for split in splits:
-                plot_overview(summary["results"], split, cfg.metric, out_dir / f"overview-{split}.png")
+                plot_overview(summary["results"], split, cfg.metric, cfg.color_by, out_dir / f"overview-{split}.png")
 
     # Log a message letting the user know there was no summary found for the passed folder, we have nothing to generate charts from
     else:
