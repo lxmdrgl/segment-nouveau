@@ -82,7 +82,7 @@ def count_split(model, loader, sizing, prepare=None):
 
     # Begin evaluation
     with torch.no_grad():
-        for images, masks in tqdm(loader, desc=bar_desc(log, "[EVAL]  Progress")):
+        for images, masks, _ in tqdm(loader, desc=bar_desc(log, "[EVAL]  Progress")):  # _ means we're throwing away thermal for scoring if it is present
             # Put images and masks on the same device as the model
             images = images.to(device)
             masks = masks.to(device)

@@ -1,7 +1,8 @@
 """
 ADDING A NEW TRANSFORM:
-Transforms can be added here as a function and a branch in build_training_transform. They should accept both an image and a mask,
-they need to transform the image and mask in EXACTLY the same way, and they need to return the image and the mask
+Transforms can be added here as a function and a branch in build_training_transform. They should accept both an image, mask,
+and extras dict, they need to transform the image and mask in EXACTLY the same way, and they need to return the image, mask,
+and extras dict.
 """
 
 from torchvision.transforms import v2

@@ -18,6 +18,7 @@ seed: 42                # Random seed for the training process
 eval_splits: [test]     # The splits to score with the best model - [] for none
 device: cuda            # cuda, cuda:<n> for a specific GPU, or cpu
 num_workers: 4          # Number of processes for parallel loading of examples
+thermal: false          # True = also load thermal data per image (thermal-data/<stem>.npy) and pass it to the loss function as extras["thermal"] (needs ciwa-full-split)
 resume: false           # True = carry on from the last finished epoch in the run folder given by hydra.run.dir (or hydra.sweep.dir for a sweep)
 
 

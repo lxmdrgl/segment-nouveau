@@ -1,10 +1,9 @@
 """
 ADDING A LOSS FUNCTION:
-Any loss functions you want to add should be created as a function (or class, see CEDiceLoss) in this file. 
-Loss functions, for the purpose of this suite, need to take logits of shape [batch_size, num_classes, height, width], 
-masks of shape [batch_size, height, width], should ignore pixels equal to IGNORE_INDEX, and should return a single 
-number representing the loss. It needs to be added to the LOSSES registry and have a corresponding <loss_fn_name>.yaml file 
-created under conf/loss/
+Loss functions, for the purpose of this suite, need to take logits of shape [batch_size, num_classes, height, width], masks of shape [batch_size, height, width],
+and extras, a dict of extra per-pixel data (e.g. extras["thermal"], float32 [batch_size, 1, height, width] in °C when training with thermal=true; empty otherwise).
+They should ignore pixels equal to IGNORE_INDEX, and return a single number representing the loss. It needs to be added to the LOSSES registry and have a
+corresponding <loss_fn_name>.yaml file created under conf/loss/
 """
 
 import torch
@@ -18,6 +17,24 @@ def cross_entropy_loss():
     :return:    The Torch cross entropy loss function
     """
     return torch.nn.CrossEntropyLoss(ignore_index=IGNORE_INDEX)
+
+
+class CELoss:
+    """
+    Plain cross-entropy, in the (logits, masks, extras) form every loss in LOSSES uses - extras are ignored
+    """
+
+    def __init__(self) -> None:
+        self.cross_entropy = cross_entropy_loss()
+
+    def __call__(self, logits, masks, extras):
+        """
+        :param logits:  Model output, shape [batch_size, num_classes, height, width]
+        :param masks:   Class IDs, shape [batch_size, height, width]
+        :param extras:  Extra per-pixel data (unused here)
+        :return:        A single number, the loss
+        """
+        return self.cross_entropy(logits, masks)
 
 
 def _dice_loss(logits, masks):
@@ -60,11 +77,12 @@ class CEDiceLoss:
         self.cross_entropy = cross_entropy_loss()
         self.dice_weight=dice_weight
 
-    def __call__(self, logits, masks):
+    def __call__(self, logits, masks, extras):
         """
         Calculates the loss as described by the class docstring
         :param logits:  Model output, shape [batch_size, num_classes, height, width]
         :param masks:   Class IDs, shape [batch_size, height, width]
+        :param extras:  Extra per-pixel data (unused here)
         :return:        A single number, the loss
         """
         if (masks == IGNORE_INDEX).all():  # No non-ignored pixels
@@ -73,7 +91,7 @@ class CEDiceLoss:
 
 # Registry for loss functions - if you add a loss function, it needs an entry here - <name>: loss_fn, where <name> is the corresponding name in the Hydra config for the loss function.
 LOSSES = {
-    "ce": cross_entropy_loss,
+    "ce": CELoss,
     "ce_dice": CEDiceLoss,
 }
 

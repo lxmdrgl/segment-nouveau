@@ -78,6 +78,7 @@ def label_stem(image_path: Path) -> str:
     # Return the fully-stripped stem
     return stem
 
+
 def load_image(image_path: Path) -> torch.Tensor:
     """
     Loads an image as a float32 [3, H, W] tensor
@@ -92,6 +93,7 @@ def load_image(image_path: Path) -> torch.Tensor:
 
     # Return the loaded image
     return vis_img
+
 
 def _load_mask(label_path: Path) -> np.ndarray:
     """
@@ -122,29 +124,42 @@ def _load_mask(label_path: Path) -> np.ndarray:
     return mask
 
 
+def _load_thermal(thermal_path: Path) -> tv_tensors.Image:
+    """
+    Loads a thermal .npy file (one temperature per pixel) as a float32 [1, H, W] tensor 
+    Wrapped as a tv_tensors.Image so transforms crop, resize and flip it exactly like the visual image
+    :param thermal_path:    Path to the .npy file
+    :return:                float32 [1, H, W] tensor
+    """
+
+    thermal = torch.from_numpy(np.load(thermal_path)).float()
+    return tv_tensors.Image(thermal.unsqueeze(0))  # unsqueeze(0) adds the channel dimension: [H, W] -> [1, H, W]
+
+
 # Build the PyTorch Dataset class
 class SegmentationDataset(Dataset):
     """
     Numbered list of examples for one crop and split. Each example holds the paths to an image and its mask. No pictures
     are held in memory, they are only loaded when they are requested, like via ds[i]. Loaded examples are represented as
-    two tensors, and they are guaranteed to be the same size. Masks are also guaranteed to only contain class IDs and a
-    padding value, 255 by default, represented by IGNORE_INDEX. If the optional transform is supplied, it will be
-    applied to both the image AND its mask uniformly. A PyTorch DataLoader should do the asking for and stacking of results
-    into batches.
+    three items: the image and mask tensors, plus an extras dict (thermal data when thermal=True, otherwise empty). Masks 
+    are also guaranteed to only contain class IDs and a padding value, 255 by default, represented by IGNORE_INDEX. If the 
+    optional transform is supplied, it will be applied to both the image AND its mask uniformly. A PyTorch DataLoader should 
+    do the asking for and stacking of results into batches.
 
 
     Example usage:
     ds = SegmentationDataset(data_root, "tomato", "train", transform=rand_crop_transform(256, 480))
-    image, mask = ds[0]
+    image, mask, extras = ds[0]
     """
 
-    def __init__(self, data_root: Path, crop: str, split: str, transform=None) -> None:
+    def __init__(self, data_root: Path, crop: str, split: str, transform=None, thermal: bool = False) -> None:
         """
         Builds the PyTorch Dataset
         :param data_root:   Root directory containing the dataset, should have a subfolder for each crop - See README.md for expected folder structure
         :param crop:        The specific crop being considered (e.g. almond, citrus, grape, pistachio, tomato)
         :param split:       The split that is being considered (test, train, or valid)
-        :param transform:   What transform, if any, should be applied to the images and masks - Must accept both image and mask, and return both image and mask
+        :param transform:   What transform, if any, should be applied to the images and masks - Must accept and return image, mask, and extras
+        :param thermal:     Whether to also load <crop>/<split>/thermal-data/<stem>.npy for each image (returned in extras["thermal"])
         :return:            None
         """
 
@@ -155,18 +170,24 @@ class SegmentationDataset(Dataset):
         self.pairs = _find_pairs(data_root, crop, split)
         self.transform = transform
 
+        # Thermal data lives next to the visual and label folders - check it exists now rather than failing on the first batch
+        self.thermal_dir = data_root / crop / split / "thermal-data" if thermal else None
+        if self.thermal_dir is not None and not self.thermal_dir.is_dir():
+            raise FileNotFoundError(f"thermal=true but {self.thermal_dir} doesn't exist - thermal data is in ciwa-full-split, not the training folder")
+
     def __len__(self) -> int:
         """
         :return:    Number of items in the dataset
         """
         return len(self.pairs)
 
-
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
         """
         :param idx: Index of the item being fetched
-        :return:    A tuple of PyTorch tensors representing (visual_image, mask_image) with any optional transforms applied - visual_image: float32, shape=[3, h, w]; mask: int64, shape=[h, w], holds class IDs, 255 = ignored
+        :return:    (visual_image, mask, extras) with any optional transforms applied - visual_image: float32, shape=[3, h, w]; mask: int64, shape=[h, w], holds class IDs, 255 = ignored;
+                    extras: dict of extra per-pixel data for the loss, {"thermal": float32 [1, h, w]} when thermal=True, otherwise empty
         """
+
         # Get the pair from self.pairs at idx and store the paths to the visual and label images
         item = self.pairs[idx]
         vis_path = item[0]
@@ -184,9 +205,20 @@ class SegmentationDataset(Dataset):
         if mask.shape != vis_img.shape[1:]:
             raise ValueError(f"Mask {lbl_path.name} of size {mask.shape} does not match image {vis_path.name} of size {vis_img.shape[1:]}")
 
+        # Extra per-pixel data that gets passed to the loss function
+        extras = {}
+        if self.thermal_dir is not None:
+            thermal_path = self.thermal_dir / f"{label_stem(vis_path)}.npy"
+            extras["thermal"] = _load_thermal(thermal_path)
+
+            # Resample thermal onto the image's pixel grid so the transforms can crop, resize and flip both together
+            # This only stretches one frame over the other - it doesn't align them (we're assuming they're aligned)
+            if extras["thermal"].shape[1:] != vis_img.shape[1:]:
+                extras["thermal"] = F.resize(extras["thermal"], list(vis_img.shape[1:]))
+
         # Apply any optional transforms
         if self.transform is not None:
-            vis_img, mask = self.transform(vis_img, mask)
+            vis_img, mask, extras = self.transform(vis_img, mask, extras)
 
-        # Return the pair of (vis_img, mask) as PyTorch Tensors
-        return vis_img, mask
+        # Return the image, mask and extras
+        return vis_img, mask, extras

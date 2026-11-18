@@ -125,8 +125,8 @@ def main(cfg: DictConfig) -> None:
 
     # Load our datasets
     train_ds = SegmentationDataset(Path(cfg.data_root), cfg.crop.name, "train",
-                                   transform=build_training_transform(cfg.sizing, cfg.crop.train_crop))
-    valid_ds = SegmentationDataset(Path(cfg.data_root), cfg.crop.name, "valid")
+                                   transform=build_training_transform(cfg.sizing, cfg.crop.train_crop), thermal=cfg.thermal)
+    valid_ds = SegmentationDataset(Path(cfg.data_root), cfg.crop.name, "valid", thermal=cfg.thermal)
     train_loader = DataLoader(train_ds, num_workers=cfg.num_workers, batch_size=cfg.batch_size, shuffle=True, drop_last=True)
     valid_loader = DataLoader(valid_ds, num_workers=cfg.num_workers, batch_size=1)  # Validate with a batch size of 1 so images don't need to be the same size
 
@@ -183,15 +183,16 @@ def main(cfg: DictConfig) -> None:
     for epoch in range(start_epoch, cfg.epochs):
         # Training loop
         total_train_loss = 0.0
-        for images, masks in tqdm(train_loader, desc=bar_desc(log, f"[TRAIN] Epoch {epoch + 1}")):
+        for images, masks, extras in tqdm(train_loader, desc=bar_desc(log, f"[TRAIN] Epoch {epoch + 1}")):
 
-            # Put images and masks on specified device
+            # Put images, masks and extras on specified device
             images = images.to(cfg.device)
             masks = masks.to(cfg.device)
+            extras = {key: value.to(cfg.device) for key, value in extras.items()}
 
             logits = model(images)  # We don't need to use predict_logits logic here because images have already been transformed, so predict_logits would essentially be a no-op here
             optimizer.zero_grad()
-            loss = loss_fn(logits, masks)
+            loss = loss_fn(logits, masks, extras)
             loss.backward()
             optimizer.step()
             total_train_loss += loss.item()
@@ -217,16 +218,17 @@ def main(cfg: DictConfig) -> None:
 
         model.eval()
         with torch.no_grad():
-            for images, masks in tqdm(valid_loader, desc=bar_desc(log, f"[VALID] Epoch {epoch + 1}")):
+            for images, masks, extras in tqdm(valid_loader, desc=bar_desc(log, f"[VALID] Epoch {epoch + 1}")):
 
-                # Put images and masks on specified device
+                # Put images, masks and extras on specified device
                 images = images.to(cfg.device)
                 masks = masks.to(cfg.device)
+                extras = {key: value.to(cfg.device) for key, value in extras.items()}
 
                 # Get model's predictions and calculate loss
                 logits = predict_logits(model, images, cfg.sizing)
                 predictions = logits.argmax(dim=1)
-                loss = loss_fn(logits, masks)
+                loss = loss_fn(logits, masks, extras)
                 total_valid_loss += loss.item()
 
                 # Get confusion counts, add to running total of each
